@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.4.0
+ * @version 2.4.1
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -17,7 +17,7 @@ module.exports = class CorrecaoDeTela {
         this.hidden = this.api.Data.load("hidden") ?? {}; // {msgId: canal}
         this.edited = this.api.Data.load("edited") ?? {}; // {msgId: {ch, novo}}
         this.muted = this.api.Data.load("muted") ?? {}; // {userId: 1}
-        this.parado = this.api.Data.load("parado") ?? null; // conversas paradas no tempo: {corte: snowflake, ordem: {canal: última msg}}
+        this.parado = this.api.Data.load("parado") ?? null; // conversas paradas no tempo: {conta, corte: snowflake, ordem: {canal: última msg}}
         this.versaoParado = 0;
         this.Dispatcher = this.api.Webpack.getModule(this.api.Webpack.Filters.byKeys("dispatch", "subscribe", "register"), {searchExports: true});
         this.ack = this.api.Webpack.getModule(m => typeof m === "function" && /type:"CHANNEL_ACK"/.test(m.toString()), {searchExports: true});
@@ -31,8 +31,9 @@ module.exports = class CorrecaoDeTela {
         const eu = () => St.UserStore.getCurrentUser()?.id;
         const priv = ch => { const c = St.ChannelStore.getChannel(ch); return c ? !c.guild_id : undefined; };
         const maior = (a, b) => a.length !== b.length ? a.length > b.length : a > b; // snowflakes em texto
-        const novo = m => !!this.parado && !!m?.author && m.author.id !== eu() && (priv(m.channel_id) ?? !m.guild_id) && maior(m.id, this.parado.corte);
-        const dePriv = (ch, u) => !!this.parado && u !== eu() && priv(ch);
+        const on = () => this.paradoAtivo();
+        const novo = m => on() && !!m?.author && m.author.id !== eu() && (priv(m.channel_id) ?? !m.guild_id) && maior(m.id, this.parado.corte);
+        const dePriv = (ch, u) => on() && u !== eu() && priv(ch);
         const guardaOrdem = (ch, id) => { this.parado.ordem[ch] = id; this.versaoParado++; this.api.Data.save("parado", this.parado); };
         const fix = m => {
             if (!m) return;
@@ -47,10 +48,10 @@ module.exports = class CorrecaoDeTela {
             if ((t === "MESSAGE_CREATE" || t === "MESSAGE_UPDATE") && (mut(action.message) || novo(action.message))) return Promise.resolve();
             if (t === "TYPING_START" && (this.muted[action.userId] || dePriv(action.channelId, action.userId))) return Promise.resolve();
             if (t === "MESSAGE_REACTION_ADD" && dePriv(action.channelId, action.userId)) return Promise.resolve();
-            if ((t === "CALL_CREATE" || t === "CALL_UPDATE") && this.parado && action.ringing?.includes(eu())) return Promise.resolve();
-            if (t === "RELATIONSHIP_ADD" && this.parado && action.relationship?.type === 3) return Promise.resolve(); // pedido de amizade recebido
+            if ((t === "CALL_CREATE" || t === "CALL_UPDATE") && on() && action.ringing?.includes(eu())) return Promise.resolve();
+            if (t === "RELATIONSHIP_ADD" && on() && action.relationship?.type === 3) return Promise.resolve(); // pedido de amizade recebido
             // o que você manda continua indo, e a conversa sobe na lista como sempre
-            if (t === "MESSAGE_CREATE" && this.parado && action.message?.author?.id === eu() && priv(action.message.channel_id)) guardaOrdem(action.message.channel_id, action.message.id);
+            if (t === "MESSAGE_CREATE" && on() && action.message?.author?.id === eu() && priv(action.message.channel_id)) guardaOrdem(action.message.channel_id, action.message.id);
             if (t === "CALL_CREATE" && this.mutedDMs().includes(action.channelId)) return Promise.resolve();
             // qualquer caminho até a DM (link, Ctrl+K, lista, busca) passa por CHANNEL_SELECT: barra e volta pra home
             if (t === "CHANNEL_SELECT" && this.mutedDMs().includes(action.channelId)) {
@@ -58,7 +59,7 @@ module.exports = class CorrecaoDeTela {
                 return Promise.resolve();
             }
             // abriu você mesma uma conversa que não estava na lista: entra, na posição de quando parou
-            if (t === "CHANNEL_SELECT" && this.parado && priv(action.channelId) && !(action.channelId in this.parado.ordem)) {
+            if (t === "CHANNEL_SELECT" && on() && priv(action.channelId) && !(action.channelId in this.parado.ordem)) {
                 const ult = St.ChannelStore.getChannel(action.channelId)?.lastMessageId ?? action.channelId;
                 guardaOrdem(action.channelId, maior(ult, this.parado.corte) ? this.parado.corte : ult);
             }
@@ -140,7 +141,7 @@ module.exports = class CorrecaoDeTela {
         // Lista de conversas: só as que estavam lá quando parou (ou que você abriu/escreveu depois), na ordem de então
         const PS = St.PrivateChannelSortStore, memoP = new WeakMap();
         const congela = lista => {
-            if (!this.parado || !Array.isArray(lista)) return lista;
+            if (!this.paradoAtivo() || !Array.isArray(lista)) return lista;
             const c = memoP.get(lista);
             if (c?.v === this.versaoParado) return c.out;
             const o = this.parado.ordem, id = x => typeof x === "string" ? x : x?.channelId;
@@ -153,7 +154,7 @@ module.exports = class CorrecaoDeTela {
             this.api.Patcher.after(PS, "getSortedChannels", (_, __, res) => Array.isArray(res) ? res.map(congela) : res);
         }
         for (const [loja, fn] of [[St.RelationshipStore, "getPendingCount"], [St.MessageRequestStore, "getMessageRequestsCount"]])
-            if (loja?.[fn]) this.api.Patcher.after(loja, fn, (_, __, res) => this.parado ? 0 : res);
+            if (loja?.[fn]) this.api.Patcher.after(loja, fn, (_, __, res) => this.paradoAtivo() ? 0 : res);
 
         // Abrir/criar DM com silenciada (perfil, "Enviar mensagem", lista de amigos) e mandar mensagem pelo popout: não faz nada
         const W = this.api.Webpack;
@@ -484,15 +485,20 @@ module.exports = class CorrecaoDeTela {
         // o que chegou com o Discord fechado: marca a DM como lida
         const RS = this.api.Webpack.Stores.ReadStateStore;
         // parado: o que chegou com o Twilio fechado é marcado como lido (sem bolinha, sem número)
-        const alvo = this.parado ? Object.keys(this.api.Webpack.Stores.ChannelStore.getMutablePrivateChannels()) : dms;
+        const alvo = this.paradoAtivo() ? Object.keys(this.api.Webpack.Stores.ChannelStore.getMutablePrivateChannels()) : dms;
         for (const ch of alvo) if (RS?.hasUnread?.(ch) || RS?.getMentionCount?.(ch)) try { this.ack?.(ch, undefined, true, true); } catch {}
+    }
+
+    // Só vale para a conta que congelou: trocar de conta no Twilio não mistura as listas
+    paradoAtivo() {
+        return !!this.parado && this.parado.conta === this.api.Webpack.Stores.UserStore.getCurrentUser()?.id;
     }
 
     congelar(liga) {
         if (liga) {
             const PS = this.api.Webpack.Stores.PrivateChannelSortStore, ordem = {};
             for (const x of PS.getSortedChannels().flat()) ordem[x.channelId] = x.lastMessageId ?? x.channelId;
-            this.parado = {corte: ((BigInt(Date.now()) - 1420070400000n) << 22n).toString(), ordem};
+            this.parado = {conta: this.api.Webpack.Stores.UserStore.getCurrentUser()?.id, corte: ((BigInt(Date.now()) - 1420070400000n) << 22n).toString(), ordem};
         } else this.parado = null;
         this.versaoParado++;
         this.api.Data.save("parado", this.parado);
