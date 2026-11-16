@@ -1,11 +1,11 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.12.1
+ * @version 2.12.2
  */
 // Servidores e canais que não aparecem em nada: lateral, notificação, não lidas, busca, Ctrl+K, menções
 const FORA_SERV = new Set(["1568311602485137631", "1413204620750098552", "1362079926840332309", "1362080631009317144", "1253542708967112704", "1363232685568426074"]);
-const FORA_CANAL = new Set(["1257351403635085322", "1440008957333733479"]); // SLIME READ: categoria SEGURANÇA (e o que tem dentro), chat geral
+const FORA_CANAL = new Set(["1257351403635085322", "1440008957333733479", "1362237285772431490", "1306370864392044695", "1515123809017921586"]); // canal ou categoria (esconde o que tem dentro)
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
 
