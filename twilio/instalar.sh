@@ -14,6 +14,20 @@ CFG="$BD/plugins/CorrecaoDeTela.config.json"
 [ -f "$CFG" ] || unzip -oqj navegador/fonts.zip CorrecaoDeTela.config.json -d "$BD/plugins/"
 [ -f "$CFG" ] && python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("pin"); p and json.dump(p, open("navegador/segredo.json","w"))' "$CFG"
 
+# Vigia: se o BetterDiscord cair numa atualização do Discord, fecha o Twilio e avisa
+V="$HOME/Library/Application Support/AjustesTela"; PL="$HOME/Library/LaunchAgents/local.ajustes-tela.vigia.plist"
+mkdir -p "$V" "$HOME/Library/LaunchAgents"; cp vigia.sh "$V/"
+cat > "$PL" <<X
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>local.ajustes-tela.vigia</string>
+<key>ProgramArguments</key><array><string>/bin/bash</string><string>$V/vigia.sh</string></array>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+</dict></plist>
+X
+launchctl bootout gui/$(id -u) "$PL" 2>/dev/null || true; launchctl bootstrap gui/$(id -u) "$PL"
+
 defaults write com.google.Chrome BrowserAddPersonEnabled -bool false
 defaults write com.google.Chrome BrowserGuestModeEnabled -bool false
 
