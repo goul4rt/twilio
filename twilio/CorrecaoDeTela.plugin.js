@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.9.0
+ * @version 2.10.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -211,6 +211,8 @@ module.exports = class CorrecaoDeTela {
         this.api.DOM.removeStyle();
         clearInterval(this.timer);
         clearInterval(this.batida);
+        clearInterval(this.sessaoTimer);
+        document.querySelectorAll(".al-pcs, .al-pop").forEach(e => e.remove());
         for (const [ev, fn] of this.ouvintes ?? []) window.removeEventListener(ev, fn, true);
         this.pinEl?.remove();
     }
@@ -255,6 +257,7 @@ module.exports = class CorrecaoDeTela {
         ];
         for (const [ev, fn] of this.ouvintes) window.addEventListener(ev, fn, true);
         this.timer = setInterval(() => { if (!this.travado && Date.now() - this.ultimo > MIN * 60000) this.trava(); }, 15000);
+        this.sessaoTimer = setInterval(() => this.cuidaSessao().catch(() => {}), 5000);
         this.trava();
     }
 
@@ -380,7 +383,7 @@ module.exports = class CorrecaoDeTela {
                 try {
                     if (!pedido?.id) pedido = await json(BdApi.Net.fetch(DISP + "/pedido", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({nome: BdApi.Data.load("Dispositivo", "nome") || "Outro computador"})}));
                     if (pedido?.id) estado = (await json(BdApi.Net.fetch(`${DISP}/pedido/${pedido.id}?s=${pedido.seg}`))).estado;
-                    if (estado === "ok") { this.aprovado = true; break; } // vale até o Twilio fechar
+                    if (estado === "ok") { this.aprovado = true; this.pedido = pedido; this.sinalOk = Date.now(); break; } // vale até o Twilio fechar ou o principal desconectar
                     if (estado === "negado" || estado === "expirado") break;
                     if (!estado) pedido = null; // VPS reiniciou e perdeu o pedido: pede de novo
                 } catch {}
@@ -528,12 +531,93 @@ module.exports = class CorrecaoDeTela {
             ...Object.keys(this.muted).map(u => `[data-list-item-id="people-list___${u}"]`) // lista de amigos
         ].join(",\n");
         this.api.DOM.removeStyle();
-        if (sel) this.api.DOM.addStyle(`${sel} { display: none !important; }`);
+        this.api.DOM.addStyle(`${sel} { display: none !important; }
+.al-pcs{position:relative;margin-right:8px;cursor:pointer}
+.al-pcs.al-tem{color:#f0b232}
+.al-pcs .al-n{position:absolute;top:-6px;right:-8px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:#f23f42;color:#fff;font:700 10px/14px var(--font-primary);text-align:center}
+.al-pcs .al-n:empty{display:none}
+.al-pop{position:fixed;z-index:1002;width:320px;background:var(--background-floating,#111214);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);padding:12px;color:var(--text-normal,#dbdee1);font-family:var(--font-primary)}
+.al-pop h3{margin:0 0 8px;font-size:12px;font-weight:700;text-transform:uppercase;color:var(--header-secondary,#b5bac1)}
+.al-pop p{margin:0;font-size:14px;color:var(--text-muted,#949ba4)}
+.al-pc{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)}
+.al-pc div{flex:1;min-width:0}.al-pc b{display:block;font-size:14px}.al-pc small{display:block;font-size:12px;color:var(--text-muted,#949ba4)}
+.al-pc button{background:#da373c;color:#fff;border:0;border-radius:4px;padding:6px 10px;font-weight:600;cursor:pointer}`);
         // o que chegou com o Discord fechado: marca a DM como lida
         const RS = this.api.Webpack.Stores.ReadStateStore;
         // parado: o que chegou com o Twilio fechado é marcado como lido (sem bolinha, sem número)
         const alvo = this.paradoAtivo() ? Object.keys(this.api.Webpack.Stores.ChannelStore.getMutablePrivateChannels()) : dms;
         for (const ch of alvo) if (RS?.hasUnread?.(ch) || RS?.getMentionCount?.(ch)) try { this.ack?.(ch, undefined, true, true); } catch {}
+    }
+
+    // ---- PCs conectados: os outros dão sinal a cada 5 s; o principal vê a lista no topo e derruba ----
+    async cuidaSessao() {
+        const DISP = "https://disp.ogoulart.dev", json = async r => { try { return await (await r).json(); } catch { return null; } };
+        if (!this.principal) {
+            if (!this.aprovado || !this.pedido) return;
+            const status = this.travado ? "travado" : document.hasFocus() && Date.now() - this.ultimo < 60000 ? "em uso" : "em segundo plano";
+            const r = await json(BdApi.Net.fetch(`${DISP}/sessao/${this.pedido.id}?s=${this.pedido.seg}`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({status})}));
+            if (r) this.sinalOk = Date.now();
+            // desconectado pelo principal, sessão desconhecida, ou 2 min sem falar com a VPS: trava e pede autorização de novo
+            if ((r && r.estado !== "ok") || Date.now() - this.sinalOk > 120000) { this.aprovado = false; this.pedido = null; this.travado ? null : this.trava(); }
+            return;
+        }
+        const chave = BdApi.Data.load("Principal", "chave");
+        if (!chave) return;
+        this.pintaPcs();
+        const lista = await json(BdApi.Net.fetch(DISP + "/sessoes", {headers: {Authorization: "Bearer " + chave}}));
+        if (!Array.isArray(lista)) return;
+        for (const x of lista) if (!this.vistas?.has(x.id)) BdApi.UI.showToast(`${x.nome} está com o Twilio aberto`, {type: "warning", timeout: 8000});
+        this.vistas = new Set(lista.map(x => x.id));
+        this.sessoes = lista;
+        this.pintaPcs();
+    }
+
+    pintaPcs() {
+        let b = document.querySelector(".al-pcs");
+        const ajuda = document.querySelector('[aria-label="Ajuda"],[aria-label="Help"]');
+        if (!b && ajuda?.closest("a")) { // o Discord redesenha o topo às vezes; aí o botão volta no próximo ciclo
+            b = document.createElement("div");
+            b.className = "al-pcs " + ajuda.className;
+            b.setAttribute("role", "button");
+            b.setAttribute("aria-label", "PCs conectados");
+            b.tabIndex = 0;
+            b.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h6v2H7a1 1 0 1 0 0 2h10a1 1 0 1 0 0-2h-3v-2h6a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H4Z"/></svg><span class="al-n"></span>`;
+            b.onclick = () => this.abrePcs(b);
+            ajuda.closest("a").before(b);
+        }
+        if (!b) return;
+        const n = this.sessoes?.length ?? 0;
+        b.querySelector(".al-n").textContent = n || "";
+        b.classList.toggle("al-tem", n > 0);
+    }
+
+    abrePcs(b) {
+        if (document.querySelector(".al-pop")) return document.querySelector(".al-pop").remove();
+        const p = document.createElement("div"), r = b.getBoundingClientRect(), chave = BdApi.Data.load("Principal", "chave");
+        const hora = t => new Date(t * 1000).toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"});
+        p.className = "al-pop";
+        p.style.cssText = `top:${r.bottom + 8}px;right:${innerWidth - r.right}px`;
+        p.innerHTML = `<h3>PCs conectados</h3>` + (this.sessoes?.length ? "" : "<p>Nenhum outro PC com o Twilio aberto.</p>");
+        for (const x of this.sessoes ?? []) {
+            const l = document.createElement("div");
+            l.className = "al-pc";
+            l.innerHTML = "<div><b></b><small></small></div><button>Desconectar</button>";
+            l.querySelector("b").textContent = x.nome;
+            l.querySelector("small").textContent = `${x.status} · desde ${hora(x.inicio)} · ${x.ip}`;
+            l.querySelector("button").onclick = async e => {
+                e.target.disabled = true;
+                const ok = await BdApi.Net.fetch(`https://disp.ogoulart.dev/desconectar/${x.id}`, {method: "POST", headers: {Authorization: "Bearer " + chave}}).then(r => r.ok, () => false);
+                if (!ok) { e.target.disabled = false; return BdApi.UI.showToast("Não consegui falar com o servidor", {type: "error"}); }
+                this.sessoes = this.sessoes.filter(y => y.id !== x.id);
+                l.remove();
+                this.pintaPcs();
+                BdApi.UI.showToast(`${x.nome} desconectado`, {type: "success"});
+            };
+            p.append(l);
+        }
+        document.body.append(p);
+        const fora = e => { if (!p.contains(e.target) && !b.contains(e.target)) { p.remove(); document.removeEventListener("mousedown", fora, true); } };
+        document.addEventListener("mousedown", fora, true);
     }
 
     // Só vale para a conta que congelou: trocar de conta no Twilio não mistura as listas

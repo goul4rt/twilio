@@ -6,6 +6,7 @@ ADMIN = os.environ["ADMIN"]
 DADOS = "/app/dados"
 LOG = f"{DADOS}/log.jsonl"
 EXPIRA = 600  # pedido sem resposta em 10 min expira
+SUMIU = 45    # sessão autorizada sem sinal por 45 s = o outro Twilio fechou
 os.makedirs(DADOS, exist_ok=True)
 pedidos, trava = {}, threading.Lock()  # id -> {nome, ip, criado, estado, seg}
 
@@ -22,7 +23,10 @@ def limpa():
         if p["estado"] == "pendente" and agora - p["criado"] > EXPIRA:
             p["estado"] = "expirado"
             log(ev="expirou", id=i, nome=p["nome"], ip=p["ip"])
-        if agora - p["criado"] > 3600:
+        if p["estado"] == "ok" and p["online"] and agora - p["ultimo"] > SUMIU:
+            p["online"] = False
+            log(ev="saiu", id=i, nome=p["nome"], ip=p["ip"])
+        if agora - p.get("ultimo", p["criado"]) > 3600:
             del pedidos[i]
 
 
@@ -68,8 +72,27 @@ class H(BaseHTTPRequestHandler):
                 if not p or p["estado"] != "pendente":
                     return self.resp(404)
                 p["estado"] = "ok" if self.corpo().get("ok") is True else "negado"
+                p.update(inicio=time.time(), ultimo=time.time(), status="aberto", online=True)
                 log(ev=p["estado"], id=i, nome=p["nome"], ip=p["ip"])
                 return self.resp(200, {"estado": p["estado"]})
+            if self.path.startswith("/sessao/"):  # outro computador autorizado avisa que segue aberto
+                i, _, seg = self.path.split("/")[2].partition("?s=")
+                p = pedidos.get(i)
+                if not p or not secrets.compare_digest(seg, p["seg"]) or p["estado"] not in ("ok", "desconectado"):
+                    return self.resp(404)
+                if p["estado"] == "ok":
+                    if not p["online"]:
+                        log(ev="voltou", id=i, nome=p["nome"], ip=self.ip())
+                    p.update(ultimo=time.time(), status=str(self.corpo().get("status", "aberto"))[:16], online=True, ip=self.ip())
+                return self.resp(200, {"estado": p["estado"]})
+            if self.path.startswith("/desconectar/") and self.admin():  # este Mac derruba a outra sessão
+                i = self.path.split("/")[2]
+                p = pedidos.get(i)
+                if not p or p["estado"] != "ok":
+                    return self.resp(404)
+                p["estado"], p["online"] = "desconectado", False
+                log(ev="desconectado", id=i, nome=p["nome"], ip=p["ip"])
+                return self.resp(200, {"estado": "desconectado"})
             self.resp(404)
 
     def do_GET(self):
@@ -83,6 +106,9 @@ class H(BaseHTTPRequestHandler):
                 return self.resp(200, {"estado": p["estado"]})
             if self.path == "/pendentes" and self.admin():
                 return self.resp(200, [{"id": i, "nome": p["nome"], "ip": p["ip"], "criado": p["criado"]} for i, p in pedidos.items() if p["estado"] == "pendente"])
+            if self.path == "/sessoes" and self.admin():
+                return self.resp(200, [{"id": i, "nome": p["nome"], "ip": p["ip"], "inicio": p["inicio"], "ultimo": p["ultimo"], "status": p["status"]}
+                                       for i, p in pedidos.items() if p["estado"] == "ok" and p["online"]])
             if self.path == "/logs" and self.admin():
                 linhas = open(LOG).readlines()[-300:] if os.path.exists(LOG) else []
                 return self.resp(200, [json.loads(l) for l in linhas])
