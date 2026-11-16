@@ -2,7 +2,37 @@
   {
     "id": 1,
     "priority": 1,
-    "action": {"type": "redirect", "redirect": {"extensionPath": "/aviso.html"}},
-    "condition": {"requestDomains": ["discord.com", "discordapp.com", "discord.gg"], "resourceTypes": ["main_frame", "sub_frame"]}
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/aviso.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([^/]+\\.)?discord(app)?\\.com/[^?#]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/aviso.html"
+      }
+    },
+    "condition": {
+      "requestDomains": [
+        "discord.gg"
+      ],
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
   }
 ]

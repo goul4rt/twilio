@@ -1,4 +1,4 @@
-// Passagem secreta: 5 cliques no ícone grande do Twilio (em até 3 s) mostram o campo de PIN.
+// Passagem secreta: 5 cliques no ícone grande (em até 3 s) mostram o campo de PIN.
 // PIN certo libera o Discord no navegador por 30 min. Só funciona como extensão (Chrome/Arc).
 (() => {
   if (!globalThis.chrome?.declarativeNetRequest) return;

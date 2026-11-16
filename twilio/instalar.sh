@@ -18,7 +18,7 @@ defaults write com.google.Chrome BrowserAddPersonEnabled -bool false
 defaults write com.google.Chrome BrowserGuestModeEnabled -bool false
 
 defaults write org.mozilla.firefox EnterprisePoliciesEnabled -bool true
-defaults write org.mozilla.firefox WebsiteFilter '<dict><key>Block</key><array><string>*://discord.com/*</string><string>*://*.discord.com/*</string><string>*://discordapp.com/*</string><string>*://*.discordapp.com/*</string><string>*://discord.gg/*</string></array></dict>'
+defaults write org.mozilla.firefox WebsiteFilter '<dict><key>Block</key><array><string>*://discord.com/*</string><string>*://*.discord.com/*</string><string>*://discordapp.com/*</string><string>*://*.discordapp.com/*</string><string>*://discord.gg/*</string></array><key>Exceptions</key><array><string>*://discord.com/</string><string>*://www.discord.com/</string></array></dict>'
 FF=/Applications/Firefox.app/Contents/Resources
 if [ -d "$FF" ]; then
   cp firefox/autoconfig.js "$FF/defaults/pref/"
