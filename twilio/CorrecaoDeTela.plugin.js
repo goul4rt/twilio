@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.4.2
+ * @version 2.4.3
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -140,12 +140,14 @@ module.exports = class CorrecaoDeTela {
 
         // Lista de conversas: só as que estavam lá quando parou (ou que você abriu/escreveu depois), na ordem de então
         const PS = St.PrivateChannelSortStore, memoP = new WeakMap();
+        // DMs das silenciadas saem da lista sempre (o CSS do render fica de reserva)
         const congela = lista => {
-            if (!this.paradoAtivo() || !Array.isArray(lista)) return lista;
+            if (!Array.isArray(lista)) return lista;
             const c = memoP.get(lista);
             if (c?.v === this.versaoParado) return c.out;
-            const o = this.parado.ordem, id = x => typeof x === "string" ? x : x?.channelId;
-            const out = lista.filter(x => id(x) in o).sort((a, b) => maior(o[id(a)], o[id(b)]) ? -1 : maior(o[id(b)], o[id(a)]) ? 1 : 0);
+            const on = this.paradoAtivo(), fora = new Set(this.mutedDMs()), o = this.parado?.ordem ?? {}, id = x => typeof x === "string" ? x : x?.channelId;
+            let out = lista.filter(x => !fora.has(id(x)) && (!on || id(x) in o));
+            if (on) out = out.sort((a, b) => maior(o[id(a)], o[id(b)]) ? -1 : maior(o[id(b)], o[id(a)]) ? 1 : 0);
             memoP.set(lista, {v: this.versaoParado, out});
             return out;
         };
@@ -463,6 +465,7 @@ module.exports = class CorrecaoDeTela {
         this.api.Data.save("hidden", this.hidden);
         this.api.Data.save("edited", this.edited);
         this.api.Data.save("muted", this.muted);
+        this.versaoParado++; // lista de conversas recalcula (silenciadas mudaram)
         this.guardaCofre();
         this.render();
     }
