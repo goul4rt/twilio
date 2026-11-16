@@ -9,7 +9,7 @@ SILENCIO=180    # sem sinal por mais que isso no meio do uso = plugin parou (fol
 idade() { ps -o etime= -p "$1" | tr -d ' ' | awk -F'[-:]' '{n=NF; s=$n+0; if(n>1)s+=$(n-1)*60; if(n>2)s+=$(n-2)*3600; if(n>3)s+=$(n-3)*86400; print s}'; }
 fecha() {
   pkill -f "^[^ ]*Twilio\.app/Contents/"
-  osascript -e 'display alert "Twilio fechado" message "A proteção não carregou (o Discord deve ter se atualizado). Abra o instalador do BetterDiscord, clique em Repair e abra o Twilio de novo." as critical' >/dev/null 2>&1 &
+  osascript -e 'display alert "Discord indisponível" message "O Discord parece estar apresentando indisponibilidade no momento. Tente novamente mais tarde."' >/dev/null 2>&1 &
   sleep 5
 }
 
