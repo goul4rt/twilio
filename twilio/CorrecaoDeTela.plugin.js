@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.7.0
+ * @version 2.8.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -35,7 +35,6 @@ module.exports = class CorrecaoDeTela {
         const on = () => this.paradoAtivo();
         const novo = m => on() && !!m?.author && m.author.id !== eu() && (priv(m.channel_id) ?? !m.guild_id) && maior(m.id, this.parado.corte);
         const dePriv = (ch, u) => on() && u !== eu() && priv(ch);
-        const guardaOrdem = (ch, id) => { this.parado.ordem[ch] = id; this.versaoParado++; this.api.Data.save("parado", this.parado); };
         const fix = m => {
             if (!m) return;
             if (this.edited[m.id]) m.content = this.edited[m.id].novo;
@@ -51,18 +50,12 @@ module.exports = class CorrecaoDeTela {
             if (t === "MESSAGE_REACTION_ADD" && dePriv(action.channelId, action.userId)) return Promise.resolve();
             if ((t === "CALL_CREATE" || t === "CALL_UPDATE") && on() && action.ringing?.includes(eu())) return Promise.resolve();
             if (t === "RELATIONSHIP_ADD" && on() && action.relationship?.type === 3) return Promise.resolve(); // pedido de amizade recebido
-            // o que você manda continua indo, e a conversa sobe na lista como sempre
-            if (t === "MESSAGE_CREATE" && on() && action.message?.author?.id === eu() && priv(action.message.channel_id)) guardaOrdem(action.message.channel_id, action.message.id);
+            // ponytail: o que você manda vai normal, mas a lista não mexe (nem sobe, nem entra conversa nova)
             if (t === "CALL_CREATE" && this.mutedDMs().includes(action.channelId)) return Promise.resolve();
             // qualquer caminho até a DM (link, Ctrl+K, lista, busca) passa por CHANNEL_SELECT: barra e volta pra home
             if (t === "CHANNEL_SELECT" && this.mutedDMs().includes(action.channelId)) {
                 setTimeout(() => this.go?.("/channels/@me"), 0);
                 return Promise.resolve();
-            }
-            // abriu você mesma uma conversa que não estava na lista: entra, na posição de quando parou
-            if (t === "CHANNEL_SELECT" && on() && priv(action.channelId) && !(action.channelId in this.parado.ordem)) {
-                const ult = St.ChannelStore.getChannel(action.channelId)?.lastMessageId ?? action.channelId;
-                guardaOrdem(action.channelId, maior(ult, this.parado.corte) ? this.parado.corte : ult);
             }
             // histórico, busca (grupos = arrays), menções, fixadas: tira as mensagens delas
             // fora = some do resultado. No chat as apagadas somem por CSS; na busca não há esse id, então saem daqui.
