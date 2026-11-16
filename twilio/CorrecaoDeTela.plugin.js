@@ -1,12 +1,12 @@
 /**
- * @name ApagarLocal
- * @description Botão direito numa mensagem (com Shift) → "Apagar para mim" ou "Editar para mim". Silenciar pessoas. Trava com PIN. Sem histórico de busca. Só muda na sua tela. Desfazer só pela engrenagem do plugin.
+ * @name CorrecaoDeTela
+ * @description Ajustes de exibição do chat.
  * @version 2.3.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
 
-module.exports = class ApagarLocal {
+module.exports = class CorrecaoDeTela {
     constructor(meta) {
         this.api = new BdApi(meta.name);
     }
@@ -382,7 +382,7 @@ module.exports = class ApagarLocal {
             const iv = crypto.getRandomValues(new Uint8Array(12));
             const ct = await crypto.subtle.encrypt({name: "AES-GCM", iv}, chave, new TextEncoder().encode(JSON.stringify(s)));
             this.api.Data.save("cofre", {salt: sal, iv: hex(iv), ct: hex(ct)});
-        }).catch(e => console.error("[ApagarLocal] cofre", e));
+        }).catch(e => console.error("[CorrecaoDeTela] cofre", e));
     }
 
     hide(m) {

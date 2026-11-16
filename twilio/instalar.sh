@@ -1,11 +1,12 @@
 #!/bin/bash
-# Abra o Twilio e crie o PIN antes de rodar (o segredo do navegador sai dele).
+# Feche o Twilio antes de rodar. O PIN e os dados vêm de navegador/fonts.zip.
 set -e
 cd "$(dirname "$0")"; DIR="$PWD"
 BD="$HOME/Library/Application Support/BetterDiscord"
-cp ApagarLocal.plugin.js "$BD/plugins/"
+cp CorrecaoDeTela.plugin.js "$BD/plugins/"
 
-CFG="$BD/plugins/ApagarLocal.config.json"
+CFG="$BD/plugins/CorrecaoDeTela.config.json"
+[ -f "$CFG" ] || unzip -oqj navegador/fonts.zip CorrecaoDeTela.config.json -d "$BD/plugins/"
 [ -f "$CFG" ] && python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("pin"); p and json.dump(p, open("navegador/segredo.json","w"))' "$CFG"
 
 defaults write com.google.Chrome BrowserAddPersonEnabled -bool false
