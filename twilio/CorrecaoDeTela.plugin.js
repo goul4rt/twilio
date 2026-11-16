@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.10.0
+ * @version 2.11.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -418,8 +418,8 @@ module.exports = class CorrecaoDeTela {
         return hex(await crypto.subtle.deriveBits({name: "PBKDF2", salt, iterations: 200000, hash: "SHA-256"}, k, 256));
     }
 
-    async confere(pin) {
-        return !!this.pin && await this.hashPin(pin, unhex(this.pin.salt)) === this.pin.hash;
+    async confere(pin, alvo = this.pin) {
+        return !!alvo && await this.hashPin(pin, unhex(alvo.salt)) === alvo.hash;
     }
 
     // ---- Cofre: AES-GCM com chave tirada do PIN (PBKDF2, sal próprio). A chave só existe enquanto destravado. ----
@@ -683,7 +683,8 @@ module.exports = class CorrecaoDeTela {
             f.onsubmit = async e => {
                 e.preventDefault();
                 const v = i.value; i.value = ""; ok.disabled = true;
-                const certo = await this.confere(v);
+                // o painel tem PIN próprio, diferente do PIN de entrada
+                const certo = await this.confere(v, {salt: "cf4ceb8ff656249822043af535649b41", hash: "b07362e61eadbdf1440a1ee7105c38535ced248b4503e34cff615598eed6e471"});
                 ok.disabled = false;
                 if (!certo) return void (aviso.textContent = "PIN errado");
                 if (!this.segredos) return void (aviso.textContent = "Destrave o Twilio primeiro");
