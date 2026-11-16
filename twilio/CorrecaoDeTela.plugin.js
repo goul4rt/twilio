@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.8.0
+ * @version 2.9.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -235,6 +235,8 @@ module.exports = class CorrecaoDeTela {
     iniciaPin() {
         const MIN = 5;
         this.pin = this.api.Data.load("pin"); // {salt, hash} (PBKDF2)
+        // Só o Mac principal entra direto; nos outros, depois do PIN, o principal autoriza (via VPS). Fica fora do zip.
+        this.principal = BdApi.Data.load("Principal", "sim") === true;
         this.ultimo = Date.now();
         const atividade = () => { this.ultimo = Date.now(); };
         const teclas = e => { // travado: nenhuma tecla chega no Discord (Ctrl+K, atalhos...), só no campo do PIN
@@ -354,8 +356,9 @@ module.exports = class CorrecaoDeTela {
             }
             botao.disabled = true;
             const ok = await this.confere(v);
-            if (ok) await this.abreCofre(v);
             botao.disabled = false;
+            if (ok && !this.principal && !this.aprovado && !await autoriza()) return;
+            if (ok) await this.abreCofre(v);
             if (ok) return this.destrava();
             this.erros = (this.erros ?? 0) + 1;
             erro("PIN errado");
@@ -364,6 +367,31 @@ module.exports = class CorrecaoDeTela {
                 erro("Muitas tentativas, espere 30 segundos");
                 setTimeout(() => { i.disabled = botao.disabled = false; this.erros = 0; erro(""); i.focus(); }, 30000);
             }
+        };
+        // Outro computador: pede autorização ao Mac principal e espera. Sem internet ou VPS fora = continua esperando.
+        const autoriza = async () => {
+            const DISP = "https://disp.ogoulart.dev", espera = ms => new Promise(x => setTimeout(x, ms));
+            const json = async r => { try { return await (await r).json(); } catch { return {}; } };
+            [h1.textContent, sub.textContent] = ["Login duplo detectado", "Autorize no outro dispositivo a entrada."];
+            label.hidden = i.hidden = botao.hidden = true;
+            erro("");
+            let pedido = null, estado = "pendente";
+            while (this.travado) {
+                try {
+                    if (!pedido?.id) pedido = await json(BdApi.Net.fetch(DISP + "/pedido", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({nome: BdApi.Data.load("Dispositivo", "nome") || "Outro computador"})}));
+                    if (pedido?.id) estado = (await json(BdApi.Net.fetch(`${DISP}/pedido/${pedido.id}?s=${pedido.seg}`))).estado;
+                    if (estado === "ok") { this.aprovado = true; break; } // vale até o Twilio fechar
+                    if (estado === "negado" || estado === "expirado") break;
+                    if (!estado) pedido = null; // VPS reiniciou e perdeu o pedido: pede de novo
+                } catch {}
+                await espera(3000);
+            }
+            label.hidden = i.hidden = botao.hidden = false;
+            if (this.aprovado) return true;
+            tela("entrar");
+            erro(estado === "expirado" ? "Ninguém autorizou a tempo" : "Entrada negada");
+            setTimeout(() => i.focus(), 50);
+            return false;
         };
         form.addEventListener("submit", e => { e.preventDefault(); enviar(); });
         i.addEventListener("keydown", e => e.stopPropagation());

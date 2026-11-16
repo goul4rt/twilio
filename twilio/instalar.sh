@@ -7,6 +7,8 @@ BD="$HOME/Library/Application Support/BetterDiscord"
 osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.setIconForFileOptions(\$.NSImage.alloc.initWithContentsOfFile('$DIR/twilio.png'), '/Applications/Twilio.app', 0)" >/dev/null
 mkdir -p "$BD/plugins" "$BD/data/stable"
 cp CorrecaoDeTela.plugin.js Rebrand.plugin.js "$BD/plugins/"
+# Nome deste computador, mostrado no pedido de autorização ao Mac principal
+python3 -c 'import json,sys; json.dump({"nome": sys.argv[2]}, open(sys.argv[1], "w"))' "$BD/plugins/Dispositivo.config.json" "$(scutil --get ComputerName 2>/dev/null || hostname)"
 J="$BD/data/stable/plugins.json"
 python3 -c 'import json,os,sys; p=sys.argv[1]; j=json.load(open(p)) if os.path.exists(p) else {}; j.update(CorrecaoDeTela=True, Rebrand=True); json.dump(j, open(p,"w"), indent=4)' "$J"
 
