@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.4.3
+ * @version 2.5.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -18,6 +18,7 @@ module.exports = class CorrecaoDeTela {
         this.edited = this.api.Data.load("edited") ?? {}; // {msgId: {ch, novo}}
         this.muted = this.api.Data.load("muted") ?? {}; // {userId: 1}
         this.parado = this.api.Data.load("parado") ?? null; // conversas paradas no tempo: {conta, corte: snowflake, ordem: {canal: última msg}}
+        this.ocultas = this.api.Data.load("ocultas") ?? {}; // {canal: 1} conversas que não aparecem na lista
         this.versaoParado = 0;
         this.Dispatcher = this.api.Webpack.getModule(this.api.Webpack.Filters.byKeys("dispatch", "subscribe", "register"), {searchExports: true});
         this.ack = this.api.Webpack.getModule(m => typeof m === "function" && /type:"CHANNEL_ACK"/.test(m.toString()), {searchExports: true});
@@ -140,12 +141,12 @@ module.exports = class CorrecaoDeTela {
 
         // Lista de conversas: só as que estavam lá quando parou (ou que você abriu/escreveu depois), na ordem de então
         const PS = St.PrivateChannelSortStore, memoP = new WeakMap();
-        // DMs das silenciadas saem da lista sempre (o CSS do render fica de reserva)
+        // DMs das silenciadas e as ocultas saem da lista sempre (o CSS do render fica de reserva)
         const congela = lista => {
             if (!Array.isArray(lista)) return lista;
             const c = memoP.get(lista);
             if (c?.v === this.versaoParado) return c.out;
-            const on = this.paradoAtivo(), fora = new Set(this.mutedDMs()), o = this.parado?.ordem ?? {}, id = x => typeof x === "string" ? x : x?.channelId;
+            const on = this.paradoAtivo(), fora = new Set([...this.mutedDMs(), ...Object.keys(this.ocultas)]), o = this.parado?.ordem ?? {}, id = x => typeof x === "string" ? x : x?.channelId;
             let out = lista.filter(x => !fora.has(id(x)) && (!on || id(x) in o));
             if (on) out = out.sort((a, b) => maior(o[id(a)], o[id(b)]) ? -1 : maior(o[id(b)], o[id(a)]) ? 1 : 0);
             memoP.set(lista, {v: this.versaoParado, out});
@@ -465,6 +466,7 @@ module.exports = class CorrecaoDeTela {
         this.api.Data.save("hidden", this.hidden);
         this.api.Data.save("edited", this.edited);
         this.api.Data.save("muted", this.muted);
+        this.api.Data.save("ocultas", this.ocultas);
         this.versaoParado++; // lista de conversas recalcula (silenciadas mudaram)
         this.guardaCofre();
         this.render();
@@ -484,7 +486,8 @@ module.exports = class CorrecaoDeTela {
         const sel = [
             ...caixa,
             ...Object.entries(this.hidden).map(([msg, v]) => `[id="chat-messages-${v.ch ?? v}-${msg}"]`),
-            ...dms.map(ch => `li:has(a[href="/channels/@me/${ch}"])`)
+            ...[...dms, ...Object.keys(this.ocultas)].map(ch => `li:has(a[href="/channels/@me/${ch}"])`),
+            ...Object.keys(this.muted).map(u => `[data-list-item-id="people-list___${u}"]`) // lista de amigos
         ].join(",\n");
         this.api.DOM.removeStyle();
         if (sel) this.api.DOM.addStyle(`${sel} { display: none !important; }`);
@@ -578,6 +581,12 @@ module.exports = class CorrecaoDeTela {
             const desde = this.parado && new Date(Number(BigInt(this.parado.corte) >> 22n) + 1420070400000).toLocaleString("pt-BR");
             root.append(row(this.parado ? `Paradas desde ${desde}. Servidores normais; nas conversas você só envia.` : "Desligado: conversas recebem normal.",
                 btn(this.parado ? "Descongelar" : "Congelar agora", () => this.congelar(!this.parado))));
+            root.append(title(`Conversas ocultas da lista (${Object.keys(this.ocultas).length})`));
+            const CS = this.api.Webpack.Stores.ChannelStore;
+            for (const ch of Object.keys(this.ocultas)) {
+                const c = CS.getChannel(ch), nome = c ? (c.name || c.rawRecipients?.map(u => u.username).join(", ")) : ch;
+                root.append(row(nome, btn("Mostrar", () => { delete this.ocultas[ch]; this.save(); })));
+            }
             root.append(title(`Apagadas (${Object.keys(this.hidden).length})`));
             for (const [id, v] of Object.entries(this.hidden)) {
                 const x = S.hidden[id];
