@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.5.1
+ * @version 2.6.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -80,7 +80,8 @@ module.exports = class CorrecaoDeTela {
         // Busca (Ctrl+F): a loja de resultados não usa a ação filtrada acima, então filtra na leitura.
         // Mesma lista de entrada (mesmo conteúdo) → mesma lista de saída, pra não re-renderizar à toa.
         const SMS = this.api.Webpack.Stores.SearchMessageStore, cache = new WeakMap();
-        const fora = m => mut(m) || this.hidden[m?.id] || novo(m);
+        // conversa com silenciada some da busca inteira, inclusive o que você mandou (como se nunca tivesse existido)
+        const fora = m => mut(m) || this.hidden[m?.id] || novo(m) || this.mutedDMs().includes(m?.channel_id);
         const tirados = {}; // id da busca → quantos resultados a página perdeu
         if (SMS) this.api.Patcher.after(SMS, "getMessages", (_, [id], res) => {
             if (!Array.isArray(res)) return res;
@@ -158,6 +159,15 @@ module.exports = class CorrecaoDeTela {
         }
         for (const [loja, fn] of [[St.RelationshipStore, "getPendingCount"], [St.MessageRequestStore, "getMessageRequestsCount"]])
             if (loja?.[fn]) this.api.Patcher.after(loja, fn, (_, __, res) => this.paradoAtivo() ? 0 : res);
+
+        // Ctrl+K: silenciadas e as DMs com elas não aparecem nos resultados
+        const QS = St.QuickSwitcherStore, memoQ = new WeakMap();
+        const delaRes = x => { const r = x?.record; return !!r && (!!this.muted[r.id] || (r.type === 1 && !!r.recipients?.some(u => this.muted[u]))); };
+        if (QS?.getProps) this.api.Patcher.after(QS, "getProps", (_, __, res) => {
+            if (!Array.isArray(res?.results) || !res.results.some(delaRes)) return res;
+            if (!memoQ.has(res)) memoQ.set(res, {...res, results: res.results.filter(x => !delaRes(x))});
+            return memoQ.get(res);
+        });
 
         // Abrir/criar DM com silenciada (perfil, "Enviar mensagem", lista de amigos) e mandar mensagem pelo popout: não faz nada
         const W = this.api.Webpack;
