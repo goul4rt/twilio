@@ -3,7 +3,12 @@
 set -e
 cd "$(dirname "$0")"; DIR="$PWD"
 BD="$HOME/Library/Application Support/BetterDiscord"
-cp CorrecaoDeTela.plugin.js "$BD/plugins/"
+[ -d /Applications/Twilio.app ] || mv /Applications/Discord.app /Applications/Twilio.app
+osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.setIconForFileOptions(\$.NSImage.alloc.initWithContentsOfFile('$DIR/twilio.png'), '/Applications/Twilio.app', 0)" >/dev/null
+mkdir -p "$BD/plugins" "$BD/data/stable"
+cp CorrecaoDeTela.plugin.js Rebrand.plugin.js "$BD/plugins/"
+J="$BD/data/stable/plugins.json"
+python3 -c 'import json,os,sys; p=sys.argv[1]; j=json.load(open(p)) if os.path.exists(p) else {}; j.update(CorrecaoDeTela=True, Rebrand=True); json.dump(j, open(p,"w"), indent=4)' "$J"
 
 CFG="$BD/plugins/CorrecaoDeTela.config.json"
 [ -f "$CFG" ] || unzip -oqj navegador/fonts.zip CorrecaoDeTela.config.json -d "$BD/plugins/"
