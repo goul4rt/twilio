@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.4.1
+ * @version 2.4.2
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -476,7 +476,10 @@ module.exports = class CorrecaoDeTela {
     // ponytail: esconde por CSS pelo id do <li> (chat-messages-<canal>-<msg>) e pelo link da DM; se o Discord mudar isso, é só ajustar aqui
     render() {
         const dms = this.mutedDMs();
+        // botão "Caixa de Entrada" do topo (e o invólucro dele, pra não sobrar espaço)
+        const caixa = ["Caixa de Entrada", "Inbox"].flatMap(l => [`[role="button"][aria-label="${l}"]`, `div:has(> [role="button"][aria-label="${l}"])`]);
         const sel = [
+            ...caixa,
             ...Object.entries(this.hidden).map(([msg, v]) => `[id="chat-messages-${v.ch ?? v}-${msg}"]`),
             ...dms.map(ch => `li:has(a[href="/channels/@me/${ch}"])`)
         ].join(",\n");
