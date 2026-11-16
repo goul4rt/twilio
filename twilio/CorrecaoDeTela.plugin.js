@@ -1,8 +1,11 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.11.0
+ * @version 2.12.0
  */
+// Servidores e canais que não aparecem em nada: lateral, notificação, não lidas, busca, Ctrl+K, menções
+const FORA_SERV = new Set(["1568311602485137631", "1413204620750098552"]); // Testes do delfus, Delfus Bot
+const FORA_CANAL = new Set(["1257351403635085322", "1440008957333733479"]); // SLIME READ: categoria SEGURANÇA (e o que tem dentro), chat geral
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
 
@@ -45,6 +48,13 @@ module.exports = class CorrecaoDeTela {
             // histórico do Ctrl+F: nada novo é gravado (a loja só carrega quando a busca abre, então patcha na primeira ação de busca)
             if (t?.startsWith?.("SEARCH")) this.patchHistorico();
             if (t === "SEARCH_HISTORY_WEB_ADD_ITEM" && !this.limpando) return Promise.resolve();
+            // servidores/canais escondidos: nada deles chega, e abrir leva pra outro canal do servidor (ou pra home)
+            if (["MESSAGE_CREATE", "MESSAGE_UPDATE", "MESSAGE_REACTION_ADD", "TYPING_START"].includes(t) && this.foraSv(action.channelId ?? action.message?.channel_id, action.guildId ?? action.message?.guild_id)) return Promise.resolve();
+            if (t === "CHANNEL_SELECT" && this.foraSv(action.channelId, action.guildId)) {
+                const g = action.guildId, outro = !FORA_SERV.has(g) && St.GuildChannelStore?.getChannels(g)?.SELECTABLE?.map(x => x.channel).find(c => !this.foraSv(c.id));
+                setTimeout(() => this.go?.(outro ? `/channels/${g}/${outro.id}` : "/channels/@me"), 0);
+                return Promise.resolve();
+            }
             if ((t === "MESSAGE_CREATE" || t === "MESSAGE_UPDATE") && (mut(action.message) || novo(action.message))) return Promise.resolve();
             if (t === "TYPING_START" && (this.muted[action.userId] || dePriv(action.channelId, action.userId))) return Promise.resolve();
             if (t === "MESSAGE_REACTION_ADD" && dePriv(action.channelId, action.userId)) return Promise.resolve();
@@ -64,7 +74,7 @@ module.exports = class CorrecaoDeTela {
                 o.messages = o.messages.filter(x => Array.isArray(x) ? !x.some(y => (y.hit ?? true) && fora(y)) : !fora(x));
                 o.messages.forEach(x => Array.isArray(x) ? x.forEach(fix) : fix(x));
             };
-            limpa(action, x => mut(x) || novo(x));
+            limpa(action, x => mut(x) || novo(x) || this.foraSv(x?.channel_id, x?.guild_id));
             fix(action?.message);
             if (t === "CHANNEL_CREATE" || t === "CONNECTION_OPEN") setTimeout(() => this.render(), 1000);
             return orig.call(that, action);
@@ -74,7 +84,7 @@ module.exports = class CorrecaoDeTela {
         // Mesma lista de entrada (mesmo conteúdo) → mesma lista de saída, pra não re-renderizar à toa.
         const SMS = this.api.Webpack.Stores.SearchMessageStore, cache = new WeakMap();
         // conversa com silenciada some da busca inteira, inclusive o que você mandou (como se nunca tivesse existido)
-        const fora = m => mut(m) || this.hidden[m?.id] || novo(m) || this.mutedDMs().includes(m?.channel_id);
+        const fora = m => mut(m) || this.hidden[m?.id] || novo(m) || this.mutedDMs().includes(m?.channel_id) || this.foraSv(m?.channel_id, m?.guild_id);
         const tirados = {}; // id da busca → quantos resultados a página perdeu
         if (SMS) this.api.Patcher.after(SMS, "getMessages", (_, [id], res) => {
             if (!Array.isArray(res)) return res;
@@ -155,12 +165,26 @@ module.exports = class CorrecaoDeTela {
 
         // Ctrl+K: silenciadas e as DMs com elas não aparecem nos resultados
         const QS = St.QuickSwitcherStore, memoQ = new WeakMap();
-        const delaRes = x => { const r = x?.record; return !!r && (!!this.muted[r.id] || (r.type === 1 && !!r.recipients?.some(u => this.muted[u]))); };
+        const delaRes = x => { const r = x?.record; return !!r && (!!this.muted[r.id] || (r.type === 1 && !!r.recipients?.some(u => this.muted[u])) || FORA_SERV.has(r.id) || (r.guild_id != null && this.foraSv(r.id, r.guild_id))); };
         if (QS?.getProps) this.api.Patcher.after(QS, "getProps", (_, __, res) => {
             if (!Array.isArray(res?.results) || !res.results.some(delaRes)) return res;
             if (!memoQ.has(res)) memoQ.set(res, {...res, results: res.results.filter(x => !delaRes(x))});
             return memoQ.get(res);
         });
+
+        // Lateral de servidores: os escondidos saem da árvore (inclusive de dentro das pastas)
+        const SG = St.SortedGuildStore, memoG = new WeakMap(), tem2 = n => FORA_SERV.has(String(n.id));
+        const poda = t => {
+            const nodes = {};
+            for (const [k, n] of Object.entries(t.nodes)) if (!tem2(n)) nodes[k] = n.children?.some(tem2) ? {...n, children: n.children.filter(c => !tem2(c))} : n;
+            return Object.assign(Object.create(Object.getPrototypeOf(t)), t, {nodes, root: {...t.root, children: t.root.children.filter(c => !tem2(c)).map(c => nodes[c.id] ?? c)}});
+        };
+        if (SG?.getGuildsTree) this.api.Patcher.after(SG, "getGuildsTree", (_, __, t) => {
+            if (!t?.root) return t;
+            if (!memoG.has(t)) memoG.set(t, poda(t));
+            return memoG.get(t);
+        });
+        setTimeout(() => SG?.emitChange?.(), 0);
 
         // Abrir/criar DM com silenciada (perfil, "Enviar mensagem", lista de amigos) e mandar mensagem pelo popout: não faz nada
         const W = this.api.Webpack;
@@ -528,7 +552,8 @@ module.exports = class CorrecaoDeTela {
             '[class*="nowPlayingColumn_"]', "aside.refresh-active-now", // painel "Ativo agora" dos amigos
             ...Object.entries(this.hidden).map(([msg, v]) => `[id="chat-messages-${v.ch ?? v}-${msg}"]`),
             ...[...dms, ...Object.keys(this.ocultas)].map(ch => `li:has(a[href="/channels/@me/${ch}"])`),
-            ...Object.keys(this.muted).map(u => `[data-list-item-id="people-list___${u}"]`) // lista de amigos
+            ...Object.keys(this.muted).map(u => `[data-list-item-id="people-list___${u}"]`), // lista de amigos
+            ...this.canaisFora().map(c => `li:has([data-list-item-id="channels___${c}"])`) // canais/categoria escondidos
         ].join(",\n");
         this.api.DOM.removeStyle();
         this.api.DOM.addStyle(`${sel} { display: none !important; }
@@ -546,7 +571,7 @@ module.exports = class CorrecaoDeTela {
         const RS = this.api.Webpack.Stores.ReadStateStore;
         // parado: o que chegou com o Twilio fechado é marcado como lido (sem bolinha, sem número)
         const alvo = this.paradoAtivo() ? Object.keys(this.api.Webpack.Stores.ChannelStore.getMutablePrivateChannels()) : dms;
-        for (const ch of alvo) if (RS?.hasUnread?.(ch) || RS?.getMentionCount?.(ch)) try { this.ack?.(ch, undefined, true, true); } catch {}
+        for (const ch of [...alvo, ...this.canaisFora(true)]) if (RS?.hasUnread?.(ch) || RS?.getMentionCount?.(ch)) try { this.ack?.(ch, undefined, true, true); } catch {}
     }
 
     // ---- PCs conectados: os outros dão sinal a cada 5 s; o principal vê a lista no topo e derruba ----
@@ -618,6 +643,23 @@ module.exports = class CorrecaoDeTela {
         document.body.append(p);
         const fora = e => { if (!p.contains(e.target) && !b.contains(e.target)) { p.remove(); document.removeEventListener("mousedown", fora, true); } };
         document.addEventListener("mousedown", fora, true);
+    }
+
+    // Todos os canais escondidos (dos servidores com canal escondido; com servidores=true, também os dos servidores escondidos)
+    canaisFora(servidores) {
+        const St = this.api.Webpack.Stores, gs = new Set([...FORA_CANAL].map(c => St.ChannelStore.getChannel(c)?.guild_id).filter(Boolean));
+        if (servidores) FORA_SERV.forEach(g => gs.add(g));
+        const ids = [...gs].flatMap(g => { const r = St.GuildChannelStore?.getChannels(g) ?? {}; return [...(r.SELECTABLE ?? []), ...(r.VOCAL ?? [])].map(x => x.channel.id); });
+        return [...new Set([...FORA_CANAL, ...ids.filter(c => this.foraSv(c))])];
+    }
+
+    // Canal (ou categoria acima dele, ou o servidor) está na lista dos escondidos?
+    foraSv(ch, g) {
+        const C = this.api.Webpack.Stores.ChannelStore;
+        let c = ch && C.getChannel(ch);
+        if (FORA_SERV.has(g ?? c?.guild_id) || FORA_CANAL.has(ch)) return true;
+        for (let i = 0; c && i < 4; i++) { if (FORA_CANAL.has(c.id)) return true; c = c.parent_id && C.getChannel(c.parent_id); }
+        return false;
     }
 
     // Só vale para a conta que congelou: trocar de conta no Twilio não mistura as listas
