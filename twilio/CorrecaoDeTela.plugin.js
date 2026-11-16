@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.5.0
+ * @version 2.5.1
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -485,6 +485,7 @@ module.exports = class CorrecaoDeTela {
         const caixa = ["Caixa de Entrada", "Inbox"].flatMap(l => [`[role="button"][aria-label="${l}"]`, `div:has(> [role="button"][aria-label="${l}"])`]);
         const sel = [
             ...caixa,
+            '[class*="nowPlayingColumn_"]', "aside.refresh-active-now", // painel "Ativo agora" dos amigos
             ...Object.entries(this.hidden).map(([msg, v]) => `[id="chat-messages-${v.ch ?? v}-${msg}"]`),
             ...[...dms, ...Object.keys(this.ocultas)].map(ch => `li:has(a[href="/channels/@me/${ch}"])`),
             ...Object.keys(this.muted).map(u => `[data-list-item-id="people-list___${u}"]`) // lista de amigos
