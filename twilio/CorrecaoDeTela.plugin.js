@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.3.0
+ * @version 2.4.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -17,6 +17,8 @@ module.exports = class CorrecaoDeTela {
         this.hidden = this.api.Data.load("hidden") ?? {}; // {msgId: canal}
         this.edited = this.api.Data.load("edited") ?? {}; // {msgId: {ch, novo}}
         this.muted = this.api.Data.load("muted") ?? {}; // {userId: 1}
+        this.parado = this.api.Data.load("parado") ?? null; // conversas paradas no tempo: {corte: snowflake, ordem: {canal: última msg}}
+        this.versaoParado = 0;
         this.Dispatcher = this.api.Webpack.getModule(this.api.Webpack.Filters.byKeys("dispatch", "subscribe", "register"), {searchExports: true});
         this.ack = this.api.Webpack.getModule(m => typeof m === "function" && /type:"CHANNEL_ACK"/.test(m.toString()), {searchExports: true});
 
@@ -24,6 +26,14 @@ module.exports = class CorrecaoDeTela {
         // Silenciadas: a ação some antes de chegar nas stores, então não há tela, notificação, som, nem "não lida".
         // Editadas: troca o texto, então a edição sobrevive a reload e a edições de verdade do autor.
         const mut = m => m?.author && this.muted[m.author.id];
+        // Conversas paradas: em DM/grupo, nada que os outros mandarem depois do corte existe. Servidores normais.
+        const St = this.api.Webpack.Stores;
+        const eu = () => St.UserStore.getCurrentUser()?.id;
+        const priv = ch => { const c = St.ChannelStore.getChannel(ch); return c ? !c.guild_id : undefined; };
+        const maior = (a, b) => a.length !== b.length ? a.length > b.length : a > b; // snowflakes em texto
+        const novo = m => !!this.parado && !!m?.author && m.author.id !== eu() && (priv(m.channel_id) ?? !m.guild_id) && maior(m.id, this.parado.corte);
+        const dePriv = (ch, u) => !!this.parado && u !== eu() && priv(ch);
+        const guardaOrdem = (ch, id) => { this.parado.ordem[ch] = id; this.versaoParado++; this.api.Data.save("parado", this.parado); };
         const fix = m => {
             if (!m) return;
             if (this.edited[m.id]) m.content = this.edited[m.id].novo;
@@ -34,13 +44,23 @@ module.exports = class CorrecaoDeTela {
             // histórico do Ctrl+F: nada novo é gravado (a loja só carrega quando a busca abre, então patcha na primeira ação de busca)
             if (t?.startsWith?.("SEARCH")) this.patchHistorico();
             if (t === "SEARCH_HISTORY_WEB_ADD_ITEM" && !this.limpando) return Promise.resolve();
-            if ((t === "MESSAGE_CREATE" || t === "MESSAGE_UPDATE") && mut(action.message)) return Promise.resolve();
-            if (t === "TYPING_START" && this.muted[action.userId]) return Promise.resolve();
+            if ((t === "MESSAGE_CREATE" || t === "MESSAGE_UPDATE") && (mut(action.message) || novo(action.message))) return Promise.resolve();
+            if (t === "TYPING_START" && (this.muted[action.userId] || dePriv(action.channelId, action.userId))) return Promise.resolve();
+            if (t === "MESSAGE_REACTION_ADD" && dePriv(action.channelId, action.userId)) return Promise.resolve();
+            if ((t === "CALL_CREATE" || t === "CALL_UPDATE") && this.parado && action.ringing?.includes(eu())) return Promise.resolve();
+            if (t === "RELATIONSHIP_ADD" && this.parado && action.relationship?.type === 3) return Promise.resolve(); // pedido de amizade recebido
+            // o que você manda continua indo, e a conversa sobe na lista como sempre
+            if (t === "MESSAGE_CREATE" && this.parado && action.message?.author?.id === eu() && priv(action.message.channel_id)) guardaOrdem(action.message.channel_id, action.message.id);
             if (t === "CALL_CREATE" && this.mutedDMs().includes(action.channelId)) return Promise.resolve();
             // qualquer caminho até a DM (link, Ctrl+K, lista, busca) passa por CHANNEL_SELECT: barra e volta pra home
             if (t === "CHANNEL_SELECT" && this.mutedDMs().includes(action.channelId)) {
                 setTimeout(() => this.go?.("/channels/@me"), 0);
                 return Promise.resolve();
+            }
+            // abriu você mesma uma conversa que não estava na lista: entra, na posição de quando parou
+            if (t === "CHANNEL_SELECT" && this.parado && priv(action.channelId) && !(action.channelId in this.parado.ordem)) {
+                const ult = St.ChannelStore.getChannel(action.channelId)?.lastMessageId ?? action.channelId;
+                guardaOrdem(action.channelId, maior(ult, this.parado.corte) ? this.parado.corte : ult);
             }
             // histórico, busca (grupos = arrays), menções, fixadas: tira as mensagens delas
             // fora = some do resultado. No chat as apagadas somem por CSS; na busca não há esse id, então saem daqui.
@@ -49,7 +69,7 @@ module.exports = class CorrecaoDeTela {
                 o.messages = o.messages.filter(x => Array.isArray(x) ? !x.some(y => (y.hit ?? true) && fora(y)) : !fora(x));
                 o.messages.forEach(x => Array.isArray(x) ? x.forEach(fix) : fix(x));
             };
-            limpa(action, mut);
+            limpa(action, x => mut(x) || novo(x));
             fix(action?.message);
             if (t === "CHANNEL_CREATE" || t === "CONNECTION_OPEN") setTimeout(() => this.render(), 1000);
             return orig.call(that, action);
@@ -58,7 +78,7 @@ module.exports = class CorrecaoDeTela {
         // Busca (Ctrl+F): a loja de resultados não usa a ação filtrada acima, então filtra na leitura.
         // Mesma lista de entrada (mesmo conteúdo) → mesma lista de saída, pra não re-renderizar à toa.
         const SMS = this.api.Webpack.Stores.SearchMessageStore, cache = new WeakMap();
-        const fora = m => mut(m) || this.hidden[m?.id];
+        const fora = m => mut(m) || this.hidden[m?.id] || novo(m);
         const tirados = {}; // id da busca → quantos resultados a página perdeu
         if (SMS) this.api.Patcher.after(SMS, "getMessages", (_, [id], res) => {
             if (!Array.isArray(res)) return res;
@@ -116,6 +136,24 @@ module.exports = class CorrecaoDeTela {
             if (!memo.has(res)) memo.set(res, res.filter(u => !this.muted[u]));
             return memo.get(res);
         });
+
+        // Lista de conversas: só as que estavam lá quando parou (ou que você abriu/escreveu depois), na ordem de então
+        const PS = St.PrivateChannelSortStore, memoP = new WeakMap();
+        const congela = lista => {
+            if (!this.parado || !Array.isArray(lista)) return lista;
+            const c = memoP.get(lista);
+            if (c?.v === this.versaoParado) return c.out;
+            const o = this.parado.ordem, id = x => typeof x === "string" ? x : x?.channelId;
+            const out = lista.filter(x => id(x) in o).sort((a, b) => maior(o[id(a)], o[id(b)]) ? -1 : maior(o[id(b)], o[id(a)]) ? 1 : 0);
+            memoP.set(lista, {v: this.versaoParado, out});
+            return out;
+        };
+        if (PS) {
+            this.api.Patcher.after(PS, "getPrivateChannelIds", (_, __, res) => congela(res));
+            this.api.Patcher.after(PS, "getSortedChannels", (_, __, res) => Array.isArray(res) ? res.map(congela) : res);
+        }
+        for (const [loja, fn] of [[St.RelationshipStore, "getPendingCount"], [St.MessageRequestStore, "getMessageRequestsCount"]])
+            if (loja?.[fn]) this.api.Patcher.after(loja, fn, (_, __, res) => this.parado ? 0 : res);
 
         // Abrir/criar DM com silenciada (perfil, "Enviar mensagem", lista de amigos) e mandar mensagem pelo popout: não faz nada
         const W = this.api.Webpack;
@@ -445,7 +483,20 @@ module.exports = class CorrecaoDeTela {
         if (sel) this.api.DOM.addStyle(`${sel} { display: none !important; }`);
         // o que chegou com o Discord fechado: marca a DM como lida
         const RS = this.api.Webpack.Stores.ReadStateStore;
-        for (const ch of dms) if (RS?.hasUnread?.(ch)) try { this.ack?.(ch, undefined, true, true); } catch {}
+        // parado: o que chegou com o Twilio fechado é marcado como lido (sem bolinha, sem número)
+        const alvo = this.parado ? Object.keys(this.api.Webpack.Stores.ChannelStore.getMutablePrivateChannels()) : dms;
+        for (const ch of alvo) if (RS?.hasUnread?.(ch) || RS?.getMentionCount?.(ch)) try { this.ack?.(ch, undefined, true, true); } catch {}
+    }
+
+    congelar(liga) {
+        if (liga) {
+            const PS = this.api.Webpack.Stores.PrivateChannelSortStore, ordem = {};
+            for (const x of PS.getSortedChannels().flat()) ordem[x.channelId] = x.lastMessageId ?? x.channelId;
+            this.parado = {corte: ((BigInt(Date.now()) - 1420070400000n) << 22n).toString(), ordem};
+        } else this.parado = null;
+        this.versaoParado++;
+        this.api.Data.save("parado", this.parado);
+        this.render();
     }
 
     restoreEdit(id) {
@@ -511,6 +562,10 @@ module.exports = class CorrecaoDeTela {
             root.append(row("Trava ao abrir, após 5 min parado ou com Cmd/Ctrl+Shift+L", btn("Bloquear agora", () => this.trava())));
             // ponytail: o PIN velho continua no arquivo até o novo ser criado; fechar no meio não perde o cofre
             root.append(row("Quer trocar? Cria um PIN novo agora.", btn("Trocar PIN", () => { this.pendentes = this.segredos; this.pin = null; this.trava(); })));
+            root.append(title("Conversas paradas no tempo"));
+            const desde = this.parado && new Date(Number(BigInt(this.parado.corte) >> 22n) + 1420070400000).toLocaleString("pt-BR");
+            root.append(row(this.parado ? `Paradas desde ${desde}. Servidores normais; nas conversas você só envia.` : "Desligado: conversas recebem normal.",
+                btn(this.parado ? "Descongelar" : "Congelar agora", () => this.congelar(!this.parado))));
             root.append(title(`Apagadas (${Object.keys(this.hidden).length})`));
             for (const [id, v] of Object.entries(this.hidden)) {
                 const x = S.hidden[id];
