@@ -1,7 +1,7 @@
 /**
  * @name CorrecaoDeTela
  * @description Ajustes de exibição do chat.
- * @version 2.6.0
+ * @version 2.7.0
  */
 const hex = u => [...new Uint8Array(u)].map(b => b.toString(16).padStart(2, "0")).join("");
 const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
@@ -186,6 +186,11 @@ module.exports = class CorrecaoDeTela {
         if (N) this.api.Patcher.instead(N, "showNotification", (that, [icone, titulo, corpo, info, op], orig) =>
             orig.call(that, null, "Twilio", "Nova mensagem", info, {...op, messageRecord: null, isUserAvatar: false, emoji: null}));
 
+        // Sinal de vida pro vigia do Mac: se parar (BetterDiscord caiu, plugin desligado), ele fecha o Twilio
+        const bate = () => BdApi.Data.save("Batimento", "t", Date.now());
+        bate();
+        this.batida = setInterval(bate, 4000);
+
         this.patchHistorico();
         this.iniciaPin();
         this.render();
@@ -212,6 +217,7 @@ module.exports = class CorrecaoDeTela {
         this.api.Patcher.unpatchAll();
         this.api.DOM.removeStyle();
         clearInterval(this.timer);
+        clearInterval(this.batida);
         for (const [ev, fn] of this.ouvintes ?? []) window.removeEventListener(ev, fn, true);
         this.pinEl?.remove();
     }
